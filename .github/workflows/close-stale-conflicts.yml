@@ -1,0 +1,54 @@
+name: Close stale PRs with merge conflicts
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # Every day at 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only write the actions to the log. Do not change PRs."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stale-conflict-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55   # GitHub App tokens expire after 60 minutes.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub App token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.STALE_PR_APP_ID }}
+          private-key: ${{ secrets.STALE_PR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Run sweep
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+          INACTIVE_DAYS: "90"
+          GRACE_DAYS: "7"
+          LABEL: "stale-conflict"
+          KEEP_LABEL: "keep-open"
+        run: |
+          # Scheduled runs change PRs only if the variable STALE_PR_LIVE is "true".
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if [ "${{ vars.STALE_PR_LIVE }}" = "true" ]; then
+              export DRY_RUN=false
+            else
+              export DRY_RUN=true
+            fi
+          else
+            export DRY_RUN="${{ inputs.dry_run }}"
+          fi
+          bash scripts/close-stale-conflicts.sh
